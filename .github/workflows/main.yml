@@ -1,0 +1,272 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller customtkinter hidapi pillow
+
+      - name: Build executable
+        run: |
+          pyinstaller --name="SPDStudio" --windowed --onefile --add-data="screenshots;screenshots" main.py
+
+      - name: Create release package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $zipName = "SPDStudio-Windows-$version.zip"
+
+          # Create release directory
+          New-Item -ItemType Directory -Force -Path release
+
+          # Copy executable and create README
+          Copy-Item dist/SPDStudio.exe release/
+
+          @"
+          SPDStudio $version - Windows 版本
+          ================================
+
+          使用说明:
+          1. 连接 SPD 读写器到 USB 端口
+          2. 将内存条安装到读写器上
+          3. 运行 SPDStudio.exe
+
+          系统要求:
+          - Windows 10/11
+
+          更多信息请访问: https://github.com/lvusyy/SPDStudio
+          "@ | Out-File -FilePath release/README.txt -Encoding utf8
+
+          # Create zip
+          Compress-Archive -Path release/* -DestinationPath $zipName
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SPDStudio-Windows-${{ steps.version.outputs.VERSION }}
+          path: SPDStudio-Windows-${{ steps.version.outputs.VERSION }}.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhidapi-dev libhidapi-hidraw0 libudev-dev
+          sudo apt-get install -y python3-tk
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller customtkinter hidapi pillow
+
+      - name: Build executable
+        run: |
+          pyinstaller --name="SPDStudio" --windowed --onefile --add-data="screenshots:screenshots" main.py
+
+      - name: Create release package
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TARNAME="SPDStudio-Linux-${VERSION}.tar.gz"
+
+          # Create release directory
+          mkdir -p release
+          cp dist/SPDStudio release/
+          chmod +x release/SPDStudio
+
+          # Create README
+          cat > release/README.txt << 'EOF'
+          SPDStudio $VERSION - Linux 版本
+          ================================
+
+          使用说明:
+          1. 添加 udev 规则 (首次使用):
+             echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="1230", MODE="0666"' | sudo tee /etc/udev/rules.d/99-spd-reader.rules
+             sudo udevadm control --reload-rules
+
+          2. 重新插拔 SPD 读写器
+
+          3. 运行程序:
+             chmod +x SPDStudio
+             ./SPDStudio
+
+          系统要求:
+          - Linux (Ubuntu 20.04+, Debian 11+, etc.)
+          - libhidapi-hidraw0
+
+          安装依赖:
+             sudo apt-get install libhidapi-hidraw0
+
+          更多信息请访问: https://github.com/lvusyy/SPDStudio
+          EOF
+
+          sed -i "s/\$VERSION/${VERSION}/g" release/README.txt
+
+          # Create tarball
+          tar -czvf "$TARNAME" -C release .
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SPDStudio-Linux-${{ steps.version.outputs.VERSION }}
+          path: SPDStudio-Linux-${{ steps.version.outputs.VERSION }}.tar.gz
+
+  # macOS build - Currently NOT supported
+  # Reasons:
+  # 1. macOS requires signed applications for HID device access
+  # 2. The IOKit framework is needed for USB HID communication
+  # 3. hidapi on macOS uses different backend (IOHidManager vs libusb)
+  # 4. App needs to be notarized for distribution
+  #
+  # TODO: Future adaptation needed:
+  # - Implement IOKit-based HID communication
+  # - Add code signing workflow
+  # - Add notarization step
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SPDStudio-Windows-${{ steps.version.outputs.VERSION }}
+          path: ./artifacts
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SPDStudio-Linux-${{ steps.version.outputs.VERSION }}
+          path: ./artifacts
+
+      - name: Read changelog
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Extract changelog for this version
+          if [ -f CHANGELOG.md ]; then
+            # Extract content between this version header and the next
+            CHANGELOG=$(awk "/^## \[?${VERSION}\]?/{flag=1; next} /^## \[?v[0-9]/{flag=0} flag" CHANGELOG.md)
+            if [ -z "$CHANGELOG" ]; then
+              CHANGELOG="请查看 CHANGELOG.md 获取详细更新内容。"
+            fi
+          else
+            CHANGELOG="首次发布"
+          fi
+
+          # Use delimiter for multiline output
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: SPDStudio ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## SPDStudio ${{ steps.version.outputs.VERSION }}
+
+            DDR4 内存 SPD 数据读写工具
+
+            ### 更新内容
+
+            ${{ steps.changelog.outputs.CHANGELOG }}
+
+            ### 下载说明
+
+            | 平台 | 文件 | 状态 |
+            |------|------|------|
+            | Windows | `SPDStudio-Windows-${{ steps.version.outputs.VERSION }}.zip` | ✅ 完全支持 |
+            | Linux | `SPDStudio-Linux-${{ steps.version.outputs.VERSION }}.tar.gz` | ⚠️ 实验性支持 |
+            | macOS | - | ❌ 暂不支持 |
+
+            ### Windows 使用说明
+            1. 下载并解压 `SPDStudio-Windows-${{ steps.version.outputs.VERSION }}.zip`
+            2. 连接 SPD 读写器
+            3. 运行 `SPDStudio.exe`
+
+            ### Linux 使用说明
+            1. 下载并解压: `tar -xzvf SPDStudio-Linux-${{ steps.version.outputs.VERSION }}.tar.gz`
+            2. 添加 udev 规则:
+               ```bash
+               echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="1230", MODE="0666"' | sudo tee /etc/udev/rules.d/99-spd-reader.rules
+               sudo udevadm control --reload-rules
+               ```
+            3. 重新插拔设备后运行: `./SPDStudio`
+
+            ### macOS 暂不支持的原因
+            - macOS 需要应用程序签名才能访问 HID 设备
+            - 需要使用 IOKit 框架进行 USB 通信
+            - 需要 Apple 开发者账号进行公证 (Notarization)
+
+          files: |
+            ./artifacts/SPDStudio-Windows-${{ steps.version.outputs.VERSION }}.zip
+            ./artifacts/SPDStudio-Linux-${{ steps.version.outputs.VERSION }}.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
