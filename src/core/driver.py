@@ -74,7 +74,8 @@ class SPDDriver:
             # 列出所有 HID 设备帮助调试
             all_devices = self.enumerate_devices()
             self._log_debug(f"系统中共有 {len(all_devices)} 个 HID 设备:")
-            for i, dev in enumerate(all_devices[:10]):  # 只显示前10个
+            # for i, dev in enumerate(all_devices[:10]):  # 只显示前10个
+            for i, dev in enumerate(all_devices):  # 只显示前10个
                 self._log_debug(f"  [{i}] VID=0x{dev.get('vendor_id', 0):04X}, "
                               f"PID=0x{dev.get('product_id', 0):04X}, "
                               f"Product={dev.get('product_string', 'N/A')}")

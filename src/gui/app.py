@@ -703,14 +703,14 @@ class DebugMenu(ctk.CTkToplevel):
 
         if all_devices:
             self.log_text.insert("end", f"共检测到 {len(all_devices)} 个 HID 设备:\n\n")
-            for i, dev in enumerate(all_devices[:20]):  # 最多显示 20 个
+            for i, dev in enumerate(all_devices):  # 最多显示 20 个
                 vid = dev.get('vendor_id', 0)
                 pid = dev.get('product_id', 0)
                 name = dev.get('product_string', 'N/A') or 'N/A'
                 self.log_text.insert("end", f"[{i:2d}] VID=0x{vid:04X}  PID=0x{pid:04X}  {name}\n")
 
-            if len(all_devices) > 20:
-                self.log_text.insert("end", f"\n... 还有 {len(all_devices) - 20} 个设备未显示\n")
+            # if len(all_devices) > 20:
+            #     self.log_text.insert("end", f"\n... 还有 {len(all_devices) - 20} 个设备未显示\n")
         else:
             self.log_text.insert("end", "未检测到任何 HID 设备\n")
 
