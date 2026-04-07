@@ -5,6 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [v1.1.3] - 2026-04-07
+
+### 修复
+- 修复保存和烧录 SPD 数据时未重算 Byte 126-127 与 Byte 254-255 的 CRC 校验问题
+- 新增 CRC-16 校验算法（JEDEC DDR4 SPD 规范，poly=0x1021）
+- 保存文件和烧录到设备前自动重算 CRC，确保数据完整性
+
 ## [v1.1.2] - 2026-01-29
 
 ### 修复
