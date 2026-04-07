@@ -61,6 +61,16 @@ class SPD_BYTES:
     TWTR_S_MIN = 44         # 最小 tWTR_S (低 8 位)
     TWTR_L_MIN = 45         # 最小 tWTR_L (低 8 位)
 
+    # CRC 校验位置
+    CRC_SECTION0_START = 0     # 第一段 CRC 计算起始
+    CRC_SECTION0_END = 125     # 第一段 CRC 计算结束 (Byte 0-125)
+    CRC_SECTION0_LSB = 126     # 第一段 CRC 低字节
+    CRC_SECTION0_MSB = 127     # 第一段 CRC 高字节
+    CRC_SECTION1_START = 128   # 第二段 CRC 计算起始
+    CRC_SECTION1_END = 253     # 第二段 CRC 计算结束 (Byte 128-253)
+    CRC_SECTION1_LSB = 254     # 第二段 CRC 低字节
+    CRC_SECTION1_MSB = 255     # 第二段 CRC 高字节
+
     # 细粒度时序调整 (FTB)
     TCK_MIN_FTB = 125       # tCK Fine Offset
     TAA_MIN_FTB = 123       # tAA Fine Offset

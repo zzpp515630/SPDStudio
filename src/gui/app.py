@@ -449,7 +449,9 @@ class SPDApp(ctk.CTk):
                 self._set_buttons_state(True)
                 return
 
-            self._log("设备已连接，开始写入...")
+            self._log("设备已连接，正在重算 CRC 校验...")
+            self.data_model.update_crc()
+            self._log("CRC 校验已更新")
 
             success = self.driver.write_spd(
                 self.data_model.data,

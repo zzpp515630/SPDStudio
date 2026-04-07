@@ -10,7 +10,7 @@ import json
 import os
 from datetime import datetime
 
-from ..utils.constants import SPD_SIZE
+from ..utils.constants import SPD_SIZE, SPD_BYTES
 
 
 class DataChangeType(Enum):
@@ -154,9 +154,107 @@ class SPDDataModel:
         except Exception:
             return False
 
+    @staticmethod
+    def crc16(data: List[int]) -> int:
+        """
+        计算 CRC-16-CCITT 校验值
+
+        基于 JEDEC DDR4 SPD 规范，使用多项式 0x1021。
+
+        Args:
+            data: 待计算的字节列表
+
+        Returns:
+            16 位 CRC 校验值
+        """
+        crc = 0
+        for byte in data:
+            crc ^= (byte << 8)
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+                else:
+                    crc = (crc << 1) & 0xFFFF
+        return crc
+
+    def update_crc(self) -> None:
+        """
+        重新计算并更新 CRC 校验值
+
+        根据 JEDEC DDR4 SPD 规范：
+        - Byte 126-127: Byte 0-125 的 CRC16 (小端序)
+        - Byte 254-255: Byte 128-253 的 CRC16 (小端序)
+        """
+        # 第一段: Byte 0-125 -> CRC 存储于 Byte 126(LSB), 127(MSB)
+        crc1 = self.crc16(self._data[
+            SPD_BYTES.CRC_SECTION0_START:SPD_BYTES.CRC_SECTION0_END + 1
+        ])
+        self._data[SPD_BYTES.CRC_SECTION0_LSB] = crc1 & 0xFF
+        self._data[SPD_BYTES.CRC_SECTION0_MSB] = (crc1 >> 8) & 0xFF
+
+        # 第二段: Byte 128-253 -> CRC 存储于 Byte 254(LSB), 255(MSB)
+        crc2 = self.crc16(self._data[
+            SPD_BYTES.CRC_SECTION1_START:SPD_BYTES.CRC_SECTION1_END + 1
+        ])
+        self._data[SPD_BYTES.CRC_SECTION1_LSB] = crc2 & 0xFF
+        self._data[SPD_BYTES.CRC_SECTION1_MSB] = (crc2 >> 8) & 0xFF
+
+        # 更新修改标记
+        if self._original_data:
+            for offset in [
+                SPD_BYTES.CRC_SECTION0_LSB, SPD_BYTES.CRC_SECTION0_MSB,
+                SPD_BYTES.CRC_SECTION1_LSB, SPD_BYTES.CRC_SECTION1_MSB,
+            ]:
+                if self._data[offset] != self._original_data[offset]:
+                    self._modified_bytes.add(offset)
+                elif offset in self._modified_bytes:
+                    self._modified_bytes.discard(offset)
+
+    def validate_crc(self) -> dict:
+        """
+        验证当前数据的 CRC 校验值
+
+        Returns:
+            包含两段 CRC 验证结果的字典:
+            {
+                "section0": {"valid": bool, "expected": int, "actual": int},
+                "section1": {"valid": bool, "expected": int, "actual": int},
+            }
+        """
+        # 第一段
+        expected_crc1 = self.crc16(self._data[
+            SPD_BYTES.CRC_SECTION0_START:SPD_BYTES.CRC_SECTION0_END + 1
+        ])
+        actual_crc1 = (
+            self._data[SPD_BYTES.CRC_SECTION0_LSB]
+            | (self._data[SPD_BYTES.CRC_SECTION0_MSB] << 8)
+        )
+
+        # 第二段
+        expected_crc2 = self.crc16(self._data[
+            SPD_BYTES.CRC_SECTION1_START:SPD_BYTES.CRC_SECTION1_END + 1
+        ])
+        actual_crc2 = (
+            self._data[SPD_BYTES.CRC_SECTION1_LSB]
+            | (self._data[SPD_BYTES.CRC_SECTION1_MSB] << 8)
+        )
+
+        return {
+            "section0": {
+                "valid": expected_crc1 == actual_crc1,
+                "expected": expected_crc1,
+                "actual": actual_crc1,
+            },
+            "section1": {
+                "valid": expected_crc2 == actual_crc2,
+                "expected": expected_crc2,
+                "actual": actual_crc2,
+            },
+        }
+
     def save_to_file(self, path: str) -> bool:
         """
-        保存数据到文件
+        保存数据到文件（自动重算 CRC）
 
         Args:
             path: 文件路径
@@ -165,6 +263,7 @@ class SPDDataModel:
             是否保存成功
         """
         try:
+            self.update_crc()
             with open(path, "wb") as f:
                 f.write(bytearray(self._data))
             self._file_path = path
