@@ -2,8 +2,8 @@
 版本信息和 GitHub 常量
 """
 
-__version__ = "1.1.3"
-__version_info__ = (1, 1, 3)
+__version__ = "2.0.0"
+__version_info__ = (2, 0, 0)
 
 GITHUB_REPO = "lvusyy/SPDStudio"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"

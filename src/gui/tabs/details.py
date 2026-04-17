@@ -2,6 +2,8 @@
 详细参数选项卡
 展示并允许编辑所有 SPD 参数
 """
+import json
+from pickle import FALSE
 
 import customtkinter as ctk
 from typing import Optional, Dict, Any
@@ -10,7 +12,9 @@ from ..widgets.editable_field import EditableField
 from ...core.model import SPDDataModel, DataChangeEvent
 from ...core.parser import DDR4Parser
 from ...core.parser.manufacturers import COMMON_MANUFACTURERS, get_manufacturer_id
-from ...utils.constants import Colors, SPD_BYTES, MODULE_TYPES, MTB
+from ...utils.constants import Colors, SPD_BYTES, MODULE_TYPES, MTB, DIE_DENSITY_SELECT, BANK_GROUPS_SELECT, \
+    BANK_PER_GROUPS_SELECT, COL_BITS_SELECT, ROW_BITS_SELECT, DIE_COUNT_SELECT, PACKAGE_TYPE_SELECT, RANK_COUNT_SELECT, \
+    RANK_MIX_SELECT, DEVICE_WIDTH_SELECT, MEMORY_ORG_BUS_WIDTH_SELECT, TOTAL_BUS_WIDTH_SELECT, ADDRESS_MAPPING_SELECT
 
 
 class DetailsTab(ctk.CTkFrame):
@@ -47,12 +51,11 @@ class DetailsTab(ctk.CTkFrame):
             ("模组类型", "module_type", "select", True, list(MODULE_TYPES.values())),
             ("容量", "capacity", "text", False),
             ("组织结构", "organization", "text", False),
-            ("总线宽度", "bus_width", "text", False),
-        ], column=0)
-
-        self._create_section("速度配置", [
+            # ("总线宽度", "bus_width", "text", False),
             ("速度等级", "speed_grade", "number", True, 1600, 5000),
             ("电压", "voltage", "text", False),
+            ("温度传感器", "thermal_sensor", "text", True),
+
         ], column=0)
 
         self._create_section("SPD 元数据", [
@@ -61,12 +64,16 @@ class DetailsTab(ctk.CTkFrame):
         ], column=0)
 
         self._create_section("内存组织", [
-            ("行地址位", "row_bits", "text", False),
-            ("列地址位", "col_bits", "text", False),
-            ("页大小", "page_size", "text", False),
-            ("Bank 组数", "bank_groups", "text", False),
-            ("每组 Bank 数", "banks_per_group", "text", False),
-            ("总 Bank 数", "total_banks", "text", False),
+            ("总线宽度", "total_bus_width", "select", True,TOTAL_BUS_WIDTH_SELECT),
+            ("主数据宽度", "primary_bus_width", "text", False),
+            ("ECC 支持", "ecc_support", "text", False),
+            ("ECC 宽度", "ecc_width", "text", False),
+            ("Rank 类型", "rank_mix", "select", True,RANK_MIX_SELECT),  # 对称/非对称
+            ("Rank 数量", "rank_count", "select", True,RANK_COUNT_SELECT),
+            ("颗粒位宽", "device_width", "select", True,DEVICE_WIDTH_SELECT),  # x4/x8/x16
+            ("模组位宽", "memory_org_bus_width", "text", True,MEMORY_ORG_BUS_WIDTH_SELECT),  # 64位/72位
+            ("颗粒总数", "total_devices", "text", False),
+            ("地址映射", "address_mapping", "select", True,ADDRESS_MAPPING_SELECT),
         ], column=0)
 
         # 右列分组
@@ -77,21 +84,24 @@ class DetailsTab(ctk.CTkFrame):
             ("生产日期", "manufacturing_date", "text", True),
         ], column=1)
 
+
+        self._create_section("其他信息", [
+            ("CRC校验(126,127)", "block0_crc", "text", False),
+            ("CRC校验(254,255)", "block1_crc", "text", False),
+        ], column=1)
+
         self._create_section("DRAM 信息", [
-            ("DRAM 制造商", "dram_manufacturer", "text", False),
-            ("Die 密度", "die_density", "text", False),
-            ("Die 数量", "die_count", "text", False),
-            ("封装类型", "package_type", "text", False),
+            ("DRAM 制造商", "dram_manufacturer", "text", True),
+            ("封装类型", "package_type", "select", True,PACKAGE_TYPE_SELECT),
+            ("Die 密度", "die_density","select", True,DIE_DENSITY_SELECT),
+            ("Die 数量", "die_count", "select", True,DIE_COUNT_SELECT),
             ("Die 组织", "die_organization", "text", False),
+            ("行地址位", "row_bits", "select", True,ROW_BITS_SELECT),
+            ("列地址位", "col_bits", "select", True,COL_BITS_SELECT),
+            ("页大小", "page_size", "text", False),
+            ("Bank 组数", "bank_groups", "select", True,BANK_GROUPS_SELECT),
+            ("每组 Bank 数", "banks_per_group", "select", True,BANK_PER_GROUPS_SELECT),
         ], column=1)
-
-        self._create_section("总线配置", [
-            ("主总线宽度", "primary_bus_width", "text", False),
-            ("ECC 宽度", "ecc_width", "text", False),
-            ("总宽度", "total_bus_width", "text", False),
-            ("温度传感器", "thermal_sensor", "text", False),
-        ], column=1)
-
     def _create_section(self, title: str, fields: list, column: int = 0):
         """创建一个参数分组
 
@@ -253,7 +263,37 @@ class DetailsTab(ctk.CTkFrame):
             # tCK_min = 2000000 / speed_grade
             try:
                 speed = int(value)
-                if 1600 <= speed <= 5000:
+                if speed == 1600:
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN, 0x0A)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN_FTB, 0x00)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX, 0x0C)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX_FTB, 0x00)
+                elif speed == 1866:
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN,  0x09)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN_FTB,  0xCA)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX, 0x0C)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX_FTB, 0x00)
+                elif speed == 2133:
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN, 0x08)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN_FTB,  0xC1)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX, 0x0C)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX_FTB, 0x00)
+                elif speed == 2400:
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN, 0x07)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN_FTB,   0xD6)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX, 0x0C)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX_FTB, 0x00)
+                elif speed == 2666:
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN,  0x06)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN_FTB, 0x00)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX, 0x00)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX_FTB, 0x00)
+                elif speed == 3200:
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN, 0x05)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MIN_FTB, 0x00)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX, 0x00)
+                    self.data_model.set_byte(SPD_BYTES.TCK_MAX_FTB, 0x00)
+                elif 1600 <= speed <= 5000:
                     # tCK_min in ps, MTB = 125ps
                     tck_ps = 2000000 / speed
                     tck_ps_int = int(round(tck_ps))
@@ -265,6 +305,168 @@ class DetailsTab(ctk.CTkFrame):
                     self.data_model.set_byte(SPD_BYTES.TCK_MIN_FTB, tck_ftb & 0xFF)
             except ValueError:
                 pass
+        #内存组织
+        elif key == "total_bus_width":
+            if value == '64 bits':
+                self.data_model.set_byte(SPD_BYTES.BUS_WIDTH, 0x03)
+            else:
+                self.data_model.set_byte(SPD_BYTES.BUS_WIDTH, 0x0b)
+        elif key == "rank_count":
+            rank_count = int(value)
+            org_byte = self.data_model.get_byte(SPD_BYTES.MODULE_ORG)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            new_bits_5_3 = rank_count - 1
+            # 清除原来的 Bits 5~3 (位掩码: ~(0x07 << 3))
+            org_byte &= ~(0x07 << 3)  # 清除位 3,4,5
+            # 设置新的 Bits 5~3
+            org_byte |= (new_bits_5_3 << 3)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            # self.data_model.set_byte(SPD_BYTES.BUS_WIDTH, org_byte)
+            self.data_model.set_byte(SPD_BYTES.MODULE_ORG,org_byte)
+        elif key == "rank_mix":
+            org_byte = self.data_model.get_byte(SPD_BYTES.MODULE_ORG)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            # 清除原来的 Bit 6 (位掩码: ~(1 << 6))
+            org_byte &= ~(1 << 6)  # 清除位 6
+            # 设置新的 Bit 6
+            rank_mix_value = 0 if value == 'Symmetrical' else 1
+            org_byte |= (rank_mix_value << 6)
+            self.data_model.set_byte(SPD_BYTES.MODULE_ORG, org_byte)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+        elif key == "device_width":
+            device_width = int(value)
+            width_map = {
+                4: 0,  # 000
+                8: 1,  # 001
+                16: 2,  # 010
+                32: 3  # 011
+            }
+            org_byte = self.data_model.get_byte(SPD_BYTES.MODULE_ORG)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            # 清除原来的 Bits 2~0 (位掩码: ~0x07)
+            org_byte &= ~0x07  # 清除位 0,1,2
+            # 设置新的 Bits 2~0
+            org_byte |= width_map[device_width]
+            self.data_model.set_byte(SPD_BYTES.MODULE_ORG, org_byte)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+        elif key == "package_type":
+            org_byte = self.data_model.get_byte(SPD_BYTES.PACKAGE_TYPE)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            org_byte &= ~(1 << 7)  # 清除位 7
+            # 设置新的 Bit 6
+            rank_mix_value = 0 if value == 'Monolithic' else 1
+            org_byte |= (rank_mix_value << 7)
+            self.data_model.set_byte(SPD_BYTES.PACKAGE_TYPE, org_byte)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+        elif key == "die_count":
+            die_count = int(value)
+            org_byte = self.data_model.get_byte(SPD_BYTES.PACKAGE_TYPE)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            # 清除 Bits 6~4
+            org_byte &= ~(0x07 << 4)
+            # 设置新的 Bit 6
+            # 设置新的 Bits 6~4
+            org_byte |= ((die_count - 1) << 4)
+            self.data_model.set_byte(SPD_BYTES.PACKAGE_TYPE, org_byte)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+        elif key == "row_bits":
+            row_bits = int(value)
+            org_byte = self.data_model.get_byte(SPD_BYTES.ADDRESSING)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            row_map = {
+                12: 0,  # 000
+                13: 1,  # 001
+                14: 2,  # 010
+                15: 3,  # 011
+                16: 4,  # 100
+                17: 5,  # 101
+                18: 6  # 110
+            }
+            org_byte &= ~(0x07 << 3)  # 清除位 3,4,5
+            # 设置新的 Bits 5~3
+            org_byte |= (row_map.get(row_bits) << 3)
+            # 确保 Bits 7~6 为 0 (Reserved)
+            org_byte &= ~(0x03 << 6)
+            self.data_model.set_byte(SPD_BYTES.ADDRESSING, org_byte)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+        elif key == "col_bits":
+            col_bits = int(value)
+            org_byte = self.data_model.get_byte(SPD_BYTES.ADDRESSING)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            col_map = {
+                9: 0,  # 000
+                10: 1,  # 001
+                11: 2,  # 010
+                12: 3  # 011
+            }
+            # 清除原来的 Bits 2~0 (位掩码: ~0x07)
+            org_byte &= ~0x07  # 清除位 0,1,2
+            # 设置新的 Bits 2~0
+            org_byte |= col_map.get(col_bits)
+            # 确保 Bits 7~6 为 0 (Reserved)
+            org_byte &= ~(0x03 << 6)
+            self.data_model.set_byte(SPD_BYTES.ADDRESSING, org_byte)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+        elif key == "bank_groups":
+            bank_groups = int(value)
+            org_byte = self.data_model.get_byte(SPD_BYTES.DENSITY_BANKS)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            bank_groups_map = {
+                0: 0,  # 00 - no bank groups
+                2: 1,  # 01 - 2 bank groups
+                4: 2,  # 10 - 4 bank groups
+            }
+            bits_7_6  = bank_groups_map.get(bank_groups)
+            print(bank_groups_map.get(bank_groups))
+            # 清除原来的Bits 7~6 (位掩码: ~(0x03 << 6))
+            org_byte &= ~(0x03 << 6)  # 清除位 6,7
+            # 设置新的Bits 7~6
+            org_byte |= (bits_7_6 << 6)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            self.data_model.set_byte(SPD_BYTES.DENSITY_BANKS, org_byte)
+        elif key == "banks_per_group":
+            banks_per_group = int(value)
+            org_byte = self.data_model.get_byte(SPD_BYTES.DENSITY_BANKS)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            bank_address_map = {
+                4: 0,  # 00 - 4 banks
+                8: 1,  # 01 - 8 banks
+            }
+            bits_5_4=bank_address_map.get(banks_per_group)
+            # 清除原来的Bits 5~4 (位掩码: ~(0x03 << 4))
+            org_byte &= ~(0x03 << 4)  # 清除位 4,5
+            # 设置新的Bits 5~4
+            org_byte |= (bits_5_4 << 4)
+            self.data_model.set_byte(SPD_BYTES.DENSITY_BANKS, org_byte)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+        elif key == "die_density":
+            org_byte = self.data_model.get_byte(SPD_BYTES.DENSITY_BANKS)
+            print(f"[DEBUG] MODULE_ORG byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+            # 清除原来的Bits 3~0 (位掩码: ~0x0F)
+            org_byte &= ~0x0F  # 清除位 0-3
+            capacity_map = {
+                '256Mb': 0,  # 0000
+                '512Mb': 1,  # 0001
+                '1Gb' :2,  # 0010 - 1Gb
+                '2Gb' :3,  # 0011 - 2Gb
+                '4Gb' :4,  # 0100 - 4Gb
+                '8Gb' :5,  # 0101 - 8Gb
+                '16Gb': 6,  # 0110 - 16Gb
+                '32Gb': 7,  # 0111 - 32Gb
+                '12Gb': 8,  # 1000 - 12Gb
+                '24Gb': 9,  # 1001 - 24Gb
+            }
+            # 设置新的Bits 3~0
+            org_byte |= capacity_map.get(value)
+            self.data_model.set_byte(SPD_BYTES.DENSITY_BANKS, org_byte)
+            print(f"[DEBUG] MODULE_NEW byte: 0x{org_byte:02X} (binary: {org_byte:08b})")
+        elif key == "address_mapping":
+            if value == 'standard':
+                self.data_model.set_byte(SPD_BYTES.ADDRESS_MAPPING, 0x00)
+            else:
+                self.data_model.set_byte(SPD_BYTES.ADDRESS_MAPPING, 0x01)
+
+
 
     def refresh(self):
         """刷新显示"""
@@ -275,20 +477,31 @@ class DetailsTab(ctk.CTkFrame):
 
         parser = DDR4Parser(self.data_model.data)
         info = parser.to_dict()
-
         if "error" in info:
             self._show_no_data()
             return
+        spd_block0_crc = self.data_model.verify_spd_crc(0,SPD_BYTES.BOCK0_CRC_MSB,SPD_BYTES.BOCK0_CRC_LSB)
+        spd_block1_crc = self.data_model.verify_spd_crc(128,SPD_BYTES.BOCK1_CRC_MSB,SPD_BYTES.BOCK1_CRC_LSB)
 
         # 更新字段值
-        die_info = info.get("die_info", {})
-        bank_config = info.get("bank_config", {})
-        addressing = info.get("addressing", {})
-        ecc_info = info.get("ecc_info", {})
-        thermal = info.get("thermal_sensor", {})
+        #DRAM制造商
         dram_mfr = info.get("dram_manufacturer", {})
+        #内存组织
+        memory_org = info.get("memory_organization", {})
+
+        ecc_info = memory_org.get("ecc_info", {})
+        capacity = memory_org.get("capacity", {})
+        address_mapping = memory_org.get("address_mapping", 0)
+        # 温度传感器
+        thermal = memory_org.get("thermal_sensor", {})
+        #颗粒信息
+        particle_info = info.get("particle_info", {})
+        bank_config = particle_info.get("bank_config", {})
+        die_info = particle_info.get("die_info", {})
+        addressing = particle_info.get("addressing", {})
 
         field_mapping = {
+            #基本信息
             "memory_type": info.get("memory_type", "-"),
             "module_type": info.get("module_type", "-"),
             "capacity": info.get("capacity", "-"),
@@ -296,30 +509,42 @@ class DetailsTab(ctk.CTkFrame):
             "bus_width": f"{info.get('capacity_details', {}).get('bus_width', '-')} bit",
             "speed_grade": str(info.get("speed_grade", "-")),
             "voltage": f"{info.get('voltage', 1.2):.1f}V",
+            #制造商信息
             "manufacturer": info.get("manufacturer", "-"),
             "part_number": info.get("part_number", "-"),
             "serial_number": info.get("serial_number", "-"),
             "manufacturing_date": info.get("manufacturing_date", "-"),
+            #spd元数据
             "spd_bytes_used": f"{self.data_model.data[0]} bytes" if self.data_model.has_data else "-",
             "spd_revision": f"{self.data_model.data[1] >> 4}.{self.data_model.data[1] & 0x0F}" if self.data_model.has_data else "-",
+            #other
+            "block0_crc": "OK" if spd_block0_crc.get("is_valid") else "ERR",
+            "block1_crc": "OK" if spd_block1_crc.get("is_valid") else "ERR",
+            # 内存组织
+            "total_bus_width": f"{ecc_info.get('total_width', '-')} bits",
+            "primary_bus_width": f"{ecc_info.get('primary_width', '-')} bits",
+            "ecc_support": f"{ecc_info.get('has_ecc', '-')}",
+            "ecc_width": f"{ecc_info.get('extension_width', '-')} bits",
+            "rank_count": memory_org.get("rank_count", 0),
+            "rank_mix": "Symmetrical" if memory_org.get("rank_mix", 0) == 0  else "Asymmetrical",
+            "device_width": memory_org.get("device_width", "-"),
+            "memory_org_bus_width":  f"{memory_org.get("bus_width", "-")} bit",
+            "total_devices": memory_org.get("total_devices", "-"),
+            "thermal_sensor": thermal.get("description", "-"),
+            "address_mapping": "standard" if address_mapping == 0 else "mirror",
             # DRAM 信息
             "dram_manufacturer": dram_mfr.get("name", "-"),
             "die_density": f"{die_info.get('density_gb', '-')} Gb",
             "die_count": str(die_info.get("die_count", "-")),
             "package_type": die_info.get("package_type", "-"),
             "die_organization": die_info.get("organization", "-"),
-            # 内存组织
             "row_bits": str(addressing.get("row_bits", "-")),
             "col_bits": str(addressing.get("col_bits", "-")),
             "page_size": addressing.get("page_size_str", "-"),
             "bank_groups": str(bank_config.get("bank_groups", "-")),
             "banks_per_group": str(bank_config.get("banks_per_group", "-")),
             "total_banks": str(bank_config.get("total_banks", "-")),
-            # 总线配置
-            "primary_bus_width": f"{ecc_info.get('primary_width', '-')} bits",
-            "ecc_width": f"{ecc_info.get('extension_width', '-')} bits" if ecc_info.get('has_ecc') else "N/A",
-            "total_bus_width": f"{ecc_info.get('total_width', '-')} bits",
-            "thermal_sensor": thermal.get("description", "-"),
+
         }
 
         print(f"[DEBUG DetailsTab] Updating fields with: manufacturer={field_mapping['manufacturer']}, module_type={field_mapping['module_type']}")

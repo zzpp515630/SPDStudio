@@ -182,7 +182,7 @@ class OverviewTab(ctk.CTkFrame):
             self.detail_card.add_item("封装类型", package_type)
 
         # ECC 信息
-        ecc_info = info.get('ecc_info', {})
+        ecc_info = info.get('memory_organization', {}).get("ecc_info",{})
         if ecc_info.get('has_ecc'):
             ecc_str = f"{ecc_info.get('primary_width')} bits + {ecc_info.get('extension_width')} bits ECC"
             self.detail_card.add_item("ECC", ecc_str)
@@ -190,12 +190,12 @@ class OverviewTab(ctk.CTkFrame):
             self.detail_card.add_item("总线宽度", f"{ecc_info.get('primary_width', '-')} bits")
 
         # Bank 配置
-        bank_config = info.get('bank_config', {})
+        bank_config = info.get('particle_info', {}).get('bank_config', {})
         bank_str = f"{bank_config.get('bank_groups', '-')} groups × {bank_config.get('banks_per_group', '-')} banks"
         self.detail_card.add_item("Bank 配置", bank_str)
 
         # 寻址信息
-        addressing = info.get('addressing', {})
+        addressing = info.get('particle_info', {}).get('addressing', {})
         self.detail_card.add_item("行/列地址", f"{addressing.get('row_bits', '-')} / {addressing.get('col_bits', '-')} bits")
         self.detail_card.add_item("页大小", addressing.get('page_size_str', '-'))
 

@@ -1,16 +1,23 @@
 """
 SPDStudio 主应用窗口
 """
+import re
+from random import choice
+from time import sleep
 
 import customtkinter as ctk
 import threading
 import os
 import json
 from tkinter import filedialog, messagebox
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
-from ..core.driver import SPDDriver
+import serial
+import serial.tools.list_ports
+from select import error
+
+from ..core.esp32 import SerialDriver
 from ..core.model import SPDDataModel, DataChangeEvent, DataChangeType
 from ..core.parser import DDR4Parser
 from ..core.updater import UpdateChecker, ReleaseInfo
@@ -21,7 +28,7 @@ from .tabs.xmp import XMPTab
 from .tabs.hex_editor import HexEditorTab
 from .tabs.log import LogTab
 from .widgets.update_dialog import UpdateDialog
-from ..utils.constants import Colors, SPD_SIZE
+from ..utils.constants import Colors, SPD_SIZE, SPD_BYTES
 from ..utils.version import __version__
 
 
@@ -41,7 +48,9 @@ class SPDApp(ctk.CTk):
         self.minsize(900, 600)
 
         # 核心组件 - 启用调试模式
-        self.driver = SPDDriver(debug=True)
+        # self.driver = SPDDriver(debug=True)
+        self.driver = SerialDriver(debug=True)
+        # self.driver = CH341AProgrammer(debug=True)
         self.data_model = SPDDataModel()
         self.updater = UpdateChecker()
 
@@ -60,6 +69,7 @@ class SPDApp(ctk.CTk):
 
         # 启动更新检查（2秒延迟，避免影响启动速度）
         self.after(2000, self._check_updates_startup)
+        self.serial_port = ''
 
     def _setup_ui(self):
         """设置界面"""
@@ -76,6 +86,16 @@ class SPDApp(ctk.CTk):
         # 左侧按钮组
         btn_frame = ctk.CTkFrame(toolbar, fg_color="transparent")
         btn_frame.pack(side="left", padx=15, pady=8)
+
+        self.btn_serial_port = ctk.CTkOptionMenu (
+            btn_frame,
+            width=80,
+            values=self._serial_ports(),
+            # values=["-"],
+            command=lambda choice: setattr(self, 'serial_port',  choice)
+        )
+        self.btn_serial_port.pack(side="left", padx=(0, 10))
+        self.btn_serial_port.bind("<Button-1>", self.on_dropdown_click, add=True)
 
         self.btn_read = ctk.CTkButton(
             btn_frame,
@@ -138,6 +158,16 @@ class SPDApp(ctk.CTk):
         )
         self.btn_compare.pack(side="left", padx=(0, 10))
 
+        # 清空
+        self.btn_clear = ctk.CTkButton(
+            btn_frame,
+            text="清空",
+            width=80,
+            fg_color=Colors.SECONDARY,
+            command=self._operation_clear
+        )
+        self.btn_clear.pack(side="left", padx=(0, 10))
+
         # 调试按钮
         self.btn_debug = ctk.CTkButton(
             btn_frame,
@@ -194,7 +224,7 @@ class SPDApp(ctk.CTk):
 
         # 配置选项卡
         for tab in [self.tab_overview, self.tab_details, self.tab_timing,
-                    self.tab_xmp, self.tab_hex, self.tab_log]:
+                    self.tab_xmp,  self.tab_hex, self.tab_log]:
             tab.grid_columnconfigure(0, weight=1)
             tab.grid_rowconfigure(0, weight=1)
 
@@ -284,36 +314,79 @@ class SPDApp(ctk.CTk):
             self.log_tab.log_error(message)
 
     # ==================== 操作方法 ====================
+    def on_dropdown_click(self, event):
+        """点击下拉按钮时触发"""
+        ports = self._serial_ports()
+        if ports:
+            # 更新选项
+            #TODo 获取下拉的列表 如果与ports相同则跳过配置
+            # 获取当前下拉列表的值
+            current_values = self.btn_serial_port._values if hasattr(self.btn_serial_port, '_values') else []
+            # 转换为集合进行比较（忽略顺序）
+            if set(current_values) != set(ports):
+                self.btn_serial_port.configure(values=ports)
+
+    def _serial_ports(self) -> List[str]:
+        """获取可用串口列表"""
+        ports = serial.tools.list_ports.comports()
+        serial_list = [port.device for port in ports]  # 提取设备名称
+        serial_list.insert(0,"-")
+        return serial_list
 
     def _start_read(self):
         """开始读取"""
         self._set_buttons_state(False)
+        # 二次确认
+        if not self.serial_port or self.serial_port == "" or self.serial_port == "-":
+            messagebox.showwarning(
+                "警告",
+                "请先选择串口再操作！"
+            )
+            self._set_buttons_state(True)
+            return
         self._set_status("正在连接...")
+        # 检测设备
+        self._log("开始检测设备！", "info")
+        self._set_status("开始检测设备！")
+        if not self.driver.connect(self.serial_port):
+            self._log("连接失败", "error")
+            self._set_status("连接失败")
+            self._set_buttons_state(True)
+            return
+        result = self.driver.check_n34c04()
+        if not result:
+            messagebox.showinfo(
+                "警告",
+                "SPD 检测失败\n\n"
+                "未发现设备，请重新插拔。"
+            )
+            self._set_buttons_state(True)
+            self._log("设备连接失败",level="error")
+            self.driver.disconnect()
+            return
+        self._log("设备已连接")
         self._log("开始读取 SPD 数据...")
-        threading.Thread(target=self._run_read, daemon=True).start()
+        # threading.Thread(target=self._run_read(self.serial_port), daemon=True).start()
+        threading.Thread(target=lambda: self._run_read(self.serial_port), daemon=True).start()
 
-    def _run_read(self):
+    def _run_read(self,serial_port:str):
         """执行读取（后台线程）"""
         try:
             # 清除之前的调试日志
             self.driver.clear_debug_log()
-
-            if not self.driver.connect():
-                self._log("连接失败，请检查设备", "error")
-                self._log("提示: 点击 [调试日志] 按钮查看详细诊断信息", "warning")
-                self._set_status("连接失败")
-                self._set_buttons_state(True)
-                # 在日志中显示设备枚举信息
-                self._show_device_diagnostic()
-                return
-
-            self._log("设备已连接")
+            # if not self.driver.connect(serial_port):
+            #     self._log("连接失败，请检查设备", "error")
+            #     self._log("提示: 点击 [调试日志] 按钮查看详细诊断信息", "warning")
+            #     self._set_status("连接失败")
+            #     self._set_buttons_state(True)
+            #     # 在日志中显示设备枚举信息
+            #     self._show_device_diagnostic()
+            #     return
             self._set_status("正在读取...")
-
-            data = self.driver.read_spd(
-                progress_callback=lambda p: self.progress.set(p),
-                log_callback=lambda msg: self._log(msg)
-            )
+            data = self.driver.read_spd(progress_callback=lambda p: self.progress.set(p),
+                                        log_callback=lambda msg: self._log(msg),
+                                        set_status=lambda msg: self._set_status(msg),
+                                        )
 
             self.driver.disconnect()
 
@@ -335,6 +408,7 @@ class SPDApp(ctk.CTk):
 
                 self._set_status("读取完成")
                 self.info_label.configure(text=f"{info.get('manufacturer', '')} {info.get('capacity', '')}")
+                parser.read_hex(set_log=lambda msg: self._log(msg))
             else:
                 self._log("读取失败", "error")
                 self._log("提示: 点击 [调试日志] 按钮查看详细诊断信息", "warning")
@@ -373,7 +447,7 @@ class SPDApp(ctk.CTk):
         """加载文件"""
         path = filedialog.askopenfilename(
             filetypes=[
-                ("SPD Binary", "*.bin"),
+                ("SPD Binary", "*.bin;*.spd"),
                 ("All files", "*.*")
             ]
         )
@@ -399,10 +473,19 @@ class SPDApp(ctk.CTk):
         if not self.data_model.has_data:
             messagebox.showwarning("警告", "没有可保存的数据")
             return
+        #刷新crc
+        byte_126, byte_127, crc_value = self.data_model.crc_calculate(0)
+        self.data_model.set_byte(SPD_BYTES.BOCK0_CRC_LSB, byte_126)
+        self.data_model.set_byte(SPD_BYTES.BOCK0_CRC_MSB, byte_127)
+
+        byte_254, byte_255, crc_value = self.data_model.crc_calculate(128)
+        self.data_model.set_byte(SPD_BYTES.BOCK1_CRC_LSB, byte_254)
+        self.data_model.set_byte(SPD_BYTES.BOCK1_CRC_MSB, byte_255)
 
         path = filedialog.asksaveasfilename(
             defaultextension=".bin",
             filetypes=[
+                ("SPD Binary", "*.spd"),
                 ("SPD Binary", "*.bin"),
                 ("All files", "*.*")
             ],
@@ -411,6 +494,8 @@ class SPDApp(ctk.CTk):
 
         if path:
             if self.data_model.save_to_file(path):
+                self.data_model.clear_modified()
+                self.modified_label.configure(text="")
                 self._log(f"已保存到: {path}", "success")
                 self._set_status("已保存")
             else:
@@ -435,23 +520,51 @@ class SPDApp(ctk.CTk):
         if not result:
             return
 
+        #检测设备
+        self._log("开始检测设备！", "info")
+        self._set_status("开始检测设备！")
+        if not self.driver.connect(self.serial_port):
+            self._log("连接失败", "error")
+            self._set_status("连接失败")
+            self._set_buttons_state(True)
+            return
+
+
+        result = self.driver.check_n34c04()
+        if not result:
+            messagebox.showinfo(
+                    "警告",
+                    "SPD 检测失败\n\n"
+                    "未发现设备，请重新插拔。"
+                )
+            self._log("设备连接失败", level="error")
+            self.driver.disconnect()
+            return
+        self._log("设备已连接")
         self._set_buttons_state(False)
         self._set_status("正在写入...")
         self._log("开始写入 SPD 数据...", "warning")
-        threading.Thread(target=self._run_write, daemon=True).start()
+        # 刷新crc
+        byte_126, byte_127, crc_value = self.data_model.crc_calculate(0)
+        self.data_model.set_byte(SPD_BYTES.BOCK0_CRC_LSB, byte_126)
+        self.data_model.set_byte(SPD_BYTES.BOCK0_CRC_MSB, byte_127)
 
-    def _run_write(self):
+        byte_254, byte_255, crc_value = self.data_model.crc_calculate(128)
+        self.data_model.set_byte(SPD_BYTES.BOCK1_CRC_LSB, byte_254)
+        self.data_model.set_byte(SPD_BYTES.BOCK1_CRC_MSB, byte_255)
+        # threading.Thread(target=self._run_write, daemon=True).start()
+        threading.Thread(target=lambda: self._run_write(self.serial_port), daemon=True).start()
+
+    def _run_write(self,serial_port:str):
         """执行写入（后台线程）"""
         try:
-            if not self.driver.connect():
-                self._log("连接失败", "error")
-                self._set_status("连接失败")
-                self._set_buttons_state(True)
-                return
+            # if not self.driver.connect(serial_port):
+            #     self._log("连接失败", "error")
+            #     self._set_status("连接失败")
+            #     self._set_buttons_state(True)
+            #     return
 
-            self._log("设备已连接，正在重算 CRC 校验...")
-            self.data_model.update_crc()
-            self._log("CRC 校验已更新")
+            self._log("开始写入...")
 
             success = self.driver.write_spd(
                 self.data_model.data,
@@ -530,6 +643,10 @@ class SPDApp(ctk.CTk):
         except Exception as e:
             self._log(f"对比失败: {str(e)}", "error")
             messagebox.showerror("错误", f"对比失败: {str(e)}")
+
+    def _operation_clear(self):
+        print("。。。。。。。。。。。。。。。")
+        self.data_model.clear()
 
     def _show_debug_menu(self):
         """显示调试菜单"""
@@ -705,14 +822,14 @@ class DebugMenu(ctk.CTkToplevel):
 
         if all_devices:
             self.log_text.insert("end", f"共检测到 {len(all_devices)} 个 HID 设备:\n\n")
-            for i, dev in enumerate(all_devices[:20]):  # 最多显示 20 个
+            for i, dev in enumerate(all_devices):  # 最多显示 20 个
                 vid = dev.get('vendor_id', 0)
                 pid = dev.get('product_id', 0)
                 name = dev.get('product_string', 'N/A') or 'N/A'
                 self.log_text.insert("end", f"[{i:2d}] VID=0x{vid:04X}  PID=0x{pid:04X}  {name}\n")
 
-            if len(all_devices) > 20:
-                self.log_text.insert("end", f"\n... 还有 {len(all_devices) - 20} 个设备未显示\n")
+            # if len(all_devices) > 20:
+            #     self.log_text.insert("end", f"\n... 还有 {len(all_devices) - 20} 个设备未显示\n")
         else:
             self.log_text.insert("end", "未检测到任何 HID 设备\n")
 

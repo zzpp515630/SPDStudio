@@ -64,7 +64,7 @@ class HexView(ctk.CTkFrame):
         self.selection_label = ctk.CTkLabel(
             toolbar,
             text="选择: -",
-            font=("Arial", 11),
+                font=("Arial", 11),
             text_color=Colors.TEXT_SECONDARY
         )
         self.selection_label.pack(side="left")
@@ -87,7 +87,7 @@ class HexView(ctk.CTkFrame):
         # 使用 Text 组件实现
         self.hex_text = ctk.CTkTextbox(
             display_frame,
-            font=("Consolas", 11),
+            font=("Consolas", 12),
             fg_color="#1e1e1e",
             text_color=Colors.TEXT,
             wrap="none",
@@ -287,11 +287,11 @@ class HexView(ctk.CTkFrame):
             count = end - start + 1
             if count == 1:
                 self.selection_label.configure(
-                    text=f"选择: 0x{start:03X} = 0x{self._data[start]:02X} ({self._data[start]})"
+                    text=f"选择: 0x{start:03X}({start}) = hex: 0x{self._data[start]:02X} dec: {self._data[start]} binary: {self._data[start]:08b}"
                 )
             else:
                 self.selection_label.configure(
-                    text=f"选择: 0x{start:03X} - 0x{end:03X} ({count} 字节)"
+                    text=f"选择: 0x{start:03X}({start}) - 0x{end:03X} ({count} 字节)"
                 )
 
     def _get_selected_bytes(self) -> List[int]:
@@ -398,7 +398,7 @@ class HexView(ctk.CTkFrame):
         """选择字节"""
         self._selected_offset = offset
         self.selection_label.configure(
-            text=f"选择: 0x{offset:03X} = 0x{self._data[offset]:02X} ({self._data[offset]})"
+            text=f"选择: 0x{offset:03X}({offset}) = hex: 0x{self._data[offset]:02X} dec: {self._data[offset]} binary: {self._data[offset]:08b}"
         )
         self._update_display()
         self._highlight_selection()
@@ -496,7 +496,7 @@ class ByteEditDialog(ctk.CTkToplevel):
         super().__init__(parent)
 
         self.title(f"编辑字节 0x{offset:03X}")
-        self.geometry("300x320")
+        self.geometry("300x400")
         self.resizable(False, False)
 
         self.offset = offset
@@ -507,6 +507,43 @@ class ByteEditDialog(ctk.CTkToplevel):
         self.grab_set()
 
         self._setup_ui()
+
+        # 窗口居中显示
+        self._center_window()
+
+    def _center_window(self):
+        """将窗口居中显示"""
+        self.update_idletasks()  # 确保窗口尺寸已计算
+
+        # 获取父窗口的位置和尺寸
+        parent = self.master
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+
+        # 获取当前窗口尺寸
+        dialog_width = self.winfo_width()
+        dialog_height = self.winfo_height()
+
+        # 计算居中位置（相对于父窗口中心）
+        x = parent_x + (parent_width - dialog_width) // 2
+        y = parent_y + (parent_height - dialog_height) // 2
+
+        # 确保窗口不超出屏幕边界
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+
+        if x + dialog_width > screen_width:
+            x = screen_width - dialog_width - 10
+        if x < 0:
+            x = 10
+        if y + dialog_height > screen_height:
+            y = screen_height - dialog_height - 10
+        if y < 0:
+            y = 10
+
+        self.geometry(f"+{x}+{y}")
 
     def _setup_ui(self):
         """设置UI"""
@@ -522,7 +559,7 @@ class ByteEditDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             info_frame,
-            text=f"当前值: 0x{self.current_value:02X} ({self.current_value})",
+            text=f"当前值: 0x{self.current_value:02X} ({self.current_value}) ({self.current_value:08b})",
             font=("Arial", 12)
         ).pack(anchor="w")
 
@@ -542,11 +579,18 @@ class ByteEditDialog(ctk.CTkToplevel):
         self.dec_entry.pack(fill="x", pady=(5, 0))
         self.dec_entry.insert(0, str(self.current_value))
 
+        ctk.CTkLabel(input_frame, text="或 (二进制):").pack(anchor="w", pady=(10, 0))
+        self.binary_entry = ctk.CTkEntry(input_frame, placeholder_text="")
+        self.binary_entry.pack(fill="x", pady=(5, 0))
+        self.binary_entry.insert(0, f"{self.current_value:08b}")
+
         # 联动
         self.hex_entry.bind("<KeyRelease>", self._on_hex_change)
         self.dec_entry.bind("<KeyRelease>", self._on_dec_change)
+        self.binary_entry.bind("<KeyRelease>", self._on_binary_change)
         self.hex_entry.bind("<Return>", self._on_save)
         self.dec_entry.bind("<Return>", self._on_save)
+        self.binary_entry.bind("<Return>", self._on_save)
 
         # 按钮
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -576,6 +620,8 @@ class ByteEditDialog(ctk.CTkToplevel):
             if 0 <= value <= 255:
                 self.dec_entry.delete(0, "end")
                 self.dec_entry.insert(0, str(value))
+                self.binary_entry.delete(0, "end")
+                self.binary_entry.insert(0, f"{value:08b}")
         except ValueError:
             pass
 
@@ -586,6 +632,23 @@ class ByteEditDialog(ctk.CTkToplevel):
             if 0 <= value <= 255:
                 self.hex_entry.delete(0, "end")
                 self.hex_entry.insert(0, f"{value:02X}")
+                self.binary_entry.delete(0, "end")
+                self.binary_entry.insert(0, f"{value:08b}")
+        except ValueError:
+            pass
+
+    def _on_binary_change(self, event):
+        """二进制输入变化"""
+        try:
+            value = int(self.binary_entry.get(), 2)
+            if 0 <= value <= 255:
+                # 更新十六进制输入框
+                self.hex_entry.delete(0, "end")
+                self.hex_entry.insert(0, f"{value:02X}")
+
+                # 更新十进制输入框
+                self.dec_entry.delete(0, "end")
+                self.dec_entry.insert(0, str(value))
         except ValueError:
             pass
 

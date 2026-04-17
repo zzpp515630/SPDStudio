@@ -71,6 +71,11 @@ class SPDDataModel:
         """获取修改的字节索引集合"""
         return self._modified_bytes.copy()
 
+    # @property
+    def clear_modified(self) :
+        """数据是否被修改"""
+        self._modified_bytes = set()
+
     @property
     def file_path(self) -> Optional[str]:
         """获取文件路径"""
@@ -122,6 +127,7 @@ class SPDDataModel:
             是否加载成功
         """
         if len(data) != SPD_SIZE:
+            print(f"读取错误 size:{len(data)}")
             return False
 
         self._data = data.copy()
@@ -154,107 +160,9 @@ class SPDDataModel:
         except Exception:
             return False
 
-    @staticmethod
-    def crc16(data: List[int]) -> int:
-        """
-        计算 CRC-16-CCITT 校验值
-
-        基于 JEDEC DDR4 SPD 规范，使用多项式 0x1021。
-
-        Args:
-            data: 待计算的字节列表
-
-        Returns:
-            16 位 CRC 校验值
-        """
-        crc = 0
-        for byte in data:
-            crc ^= (byte << 8)
-            for _ in range(8):
-                if crc & 0x8000:
-                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-                else:
-                    crc = (crc << 1) & 0xFFFF
-        return crc
-
-    def update_crc(self) -> None:
-        """
-        重新计算并更新 CRC 校验值
-
-        根据 JEDEC DDR4 SPD 规范：
-        - Byte 126-127: Byte 0-125 的 CRC16 (小端序)
-        - Byte 254-255: Byte 128-253 的 CRC16 (小端序)
-        """
-        # 第一段: Byte 0-125 -> CRC 存储于 Byte 126(LSB), 127(MSB)
-        crc1 = self.crc16(self._data[
-            SPD_BYTES.CRC_SECTION0_START:SPD_BYTES.CRC_SECTION0_END + 1
-        ])
-        self._data[SPD_BYTES.CRC_SECTION0_LSB] = crc1 & 0xFF
-        self._data[SPD_BYTES.CRC_SECTION0_MSB] = (crc1 >> 8) & 0xFF
-
-        # 第二段: Byte 128-253 -> CRC 存储于 Byte 254(LSB), 255(MSB)
-        crc2 = self.crc16(self._data[
-            SPD_BYTES.CRC_SECTION1_START:SPD_BYTES.CRC_SECTION1_END + 1
-        ])
-        self._data[SPD_BYTES.CRC_SECTION1_LSB] = crc2 & 0xFF
-        self._data[SPD_BYTES.CRC_SECTION1_MSB] = (crc2 >> 8) & 0xFF
-
-        # 更新修改标记
-        if self._original_data:
-            for offset in [
-                SPD_BYTES.CRC_SECTION0_LSB, SPD_BYTES.CRC_SECTION0_MSB,
-                SPD_BYTES.CRC_SECTION1_LSB, SPD_BYTES.CRC_SECTION1_MSB,
-            ]:
-                if self._data[offset] != self._original_data[offset]:
-                    self._modified_bytes.add(offset)
-                elif offset in self._modified_bytes:
-                    self._modified_bytes.discard(offset)
-
-    def validate_crc(self) -> dict:
-        """
-        验证当前数据的 CRC 校验值
-
-        Returns:
-            包含两段 CRC 验证结果的字典:
-            {
-                "section0": {"valid": bool, "expected": int, "actual": int},
-                "section1": {"valid": bool, "expected": int, "actual": int},
-            }
-        """
-        # 第一段
-        expected_crc1 = self.crc16(self._data[
-            SPD_BYTES.CRC_SECTION0_START:SPD_BYTES.CRC_SECTION0_END + 1
-        ])
-        actual_crc1 = (
-            self._data[SPD_BYTES.CRC_SECTION0_LSB]
-            | (self._data[SPD_BYTES.CRC_SECTION0_MSB] << 8)
-        )
-
-        # 第二段
-        expected_crc2 = self.crc16(self._data[
-            SPD_BYTES.CRC_SECTION1_START:SPD_BYTES.CRC_SECTION1_END + 1
-        ])
-        actual_crc2 = (
-            self._data[SPD_BYTES.CRC_SECTION1_LSB]
-            | (self._data[SPD_BYTES.CRC_SECTION1_MSB] << 8)
-        )
-
-        return {
-            "section0": {
-                "valid": expected_crc1 == actual_crc1,
-                "expected": expected_crc1,
-                "actual": actual_crc1,
-            },
-            "section1": {
-                "valid": expected_crc2 == actual_crc2,
-                "expected": expected_crc2,
-                "actual": actual_crc2,
-            },
-        }
-
     def save_to_file(self, path: str) -> bool:
         """
-        保存数据到文件（自动重算 CRC）
+        保存数据到文件
 
         Args:
             path: 文件路径
@@ -263,7 +171,6 @@ class SPDDataModel:
             是否保存成功
         """
         try:
-            self.update_crc()
             with open(path, "wb") as f:
                 f.write(bytearray(self._data))
             self._file_path = path
@@ -502,3 +409,75 @@ class SPDDataModel:
             if self._data[i] != other_data[i]:
                 differences[i] = (self._data[i], other_data[i])
         return differences
+
+    def verify_spd_crc(self,start_byte,crc_msb,crc_lsb,count=126):
+        # 获取存储的CRC值
+        stored_crc = (self.data[crc_msb] << 8) | self.data[crc_lsb]
+        # 计算CRC（只计算0~125字节）
+        calculated_crc = self.crc16_spd(start_byte,count)
+
+        is_valid = (calculated_crc == stored_crc)
+        return {
+            "is_valid": is_valid,
+            "calculated_crc": calculated_crc,
+            "stored_crc": stored_crc,
+            "start_byte": start_byte,
+            "count": count
+        }
+
+    def crc_calculate(self,start_byte,count=126):
+        """
+        计算指定区域的CRC值
+
+        参数:
+            start_byte: 起始字节索引
+            count: 要计算的字节数（默认126）
+
+        返回:
+            (byte_low, byte_high, crc_value)
+        """
+        # 计算字节0~125的CRC
+        crc_value = self.crc16_spd(start_byte,count)
+        # 分离高低字节
+        byte_low = crc_value & 0xFF  # LSB (低字节)
+        byte_high = (crc_value >> 8) & 0xFF  # MSB (高字节)
+        return byte_low, byte_high, crc_value
+
+    def crc16_spd(self,start_byte, count):
+        """
+        计算SPD指定范围的CRC16校验值 (符合JEDEC标准)
+
+        参数:
+            start_byte: 起始字节索引
+            count: 要计算的字节数
+
+        返回:
+            16位CRC校验值
+
+        示例:
+            crc16_spd(0, 126)    # 计算bytes 0-125
+            crc16_spd(128, 126)  # 计算bytes 128-253
+        """
+        if start_byte + count > len(self.data):
+            raise ValueError(f"Data too short: need {start_byte + count} bytes, but only have {len(self.data)}")
+
+        crc = 0
+        ptr = start_byte
+        remaining = count
+
+        while remaining > 0:
+            # crc = crc ^ (int)*ptr++ << 8
+            crc = crc ^ (self.data[ptr] << 8)
+            ptr += 1
+
+            # 处理8个位
+            for _ in range(8):
+                if crc & 0x8000:  # 检查最高位
+                    crc = (crc << 1) ^ 0x1021
+                else:
+                    crc = crc << 1
+                crc &= 0xFFFF  # 保持16位
+
+            remaining -= 1
+
+        return crc & 0xFFFF

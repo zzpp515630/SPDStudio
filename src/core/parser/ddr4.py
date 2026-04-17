@@ -2,8 +2,9 @@
 DDR4 SPD 解析器
 根据 JEDEC 标准解析 DDR4 内存 SPD 数据
 """
-
-from typing import List, Dict, Any, Optional
+import json
+from tarfile import data_filter
+from typing import List, Dict, Any, Optional, Callable
 from dataclasses import dataclass
 
 from .manufacturers import get_manufacturer_name
@@ -12,7 +13,7 @@ from ...utils.constants import (
     SPD_SIZE, SPD_BYTES, XMP_PROFILE_OFFSETS, DDR4_TYPE, MODULE_TYPES,
     DENSITY_MAP, DEVICE_WIDTH, ROW_BITS, COL_BITS,
     MTB, FTB, SPEED_GRADES, XMP_MAGIC,
-    PACKAGE_TYPES, DIE_COUNTS, SIGNAL_LOADING, BANKS_PER_GROUP
+    PACKAGE_TYPES, DIE_COUNTS, SIGNAL_LOADING
 )
 
 
@@ -117,6 +118,11 @@ class DDR4Parser:
         module_byte = self.data[SPD_BYTES.MODULE_TYPE] & 0x0F
         return MODULE_TYPES.get(module_byte, f"Unknown (0x{module_byte:02X})")
 
+    def parse_extend_type(self) -> str:
+        """解析扩展模组类型"""
+        extend_module_byte = self.data[SPD_BYTES.EXTENDED_MODULE_TYPE] & 0x0F
+        return MODULE_TYPES.get(extend_module_byte, f"Unknown (0x{extend_module_byte:02X})")
+
     def parse_capacity(self) -> Dict[str, Any]:
         """
         解析容量信息
@@ -135,8 +141,8 @@ class DDR4Parser:
         density_gb = DENSITY_MAP.get(density_code, 0)
 
         # Bank 组数
-        bank_groups = 4 if ((density_byte >> 6) & 0x03) == 0 else 2
-
+        # bank_groups = 4 if ((density_byte >> 6) & 0x03) == 0 else 2
+        bank_groups = 4 if ((density_byte >> 6) & 0x03) == 2 else 2
         # 行/列地址位数
         row_code = (addressing_byte >> 3) & 0x07
         col_code = addressing_byte & 0x07
@@ -149,6 +155,7 @@ class DDR4Parser:
 
         # Rank 数
         ranks = ((org_byte >> 3) & 0x07) + 1
+        ranks_mix = ((org_byte >> 6) & 0x01)
 
         # 总线宽度
         bus_width_code = width_byte & 0x07
@@ -165,8 +172,10 @@ class DDR4Parser:
         # 标准容量 = 密度 * (64 / 设备宽度) * Rank数 / 8
         # 对于 3DS 封装，需要乘以堆叠的 Die 数量
         # Formula: capacity_gb = density_gb * (bus_width / device_width) * ranks * die_count / 8
+        # Total = SDRAM Capacity  8 * Primary Bus Width  SDRAM Width * Logical Ranks per DIM
         if device_width > 0:
-            capacity_gb = density_gb * (bus_width / device_width) * ranks * die_count / 8
+            # capacity_gb = density_gb * (bus_width / device_width) * ranks * die_count / 8
+            capacity_gb = density_gb / 8 * bus_width / device_width * ranks
         else:
             capacity_gb = 0
 
@@ -177,12 +186,13 @@ class DDR4Parser:
             "col_bits": col_bits,
             "device_width": device_width,
             "ranks": ranks,
+            "ranks_mix": ranks_mix,
             "bus_width": bus_width,
             "total_capacity_gb": capacity_gb,
             "capacity_str": self._format_capacity(capacity_gb),
             "organization": f"{ranks}Rx{device_width}",
             "is_3ds": is_3ds,
-            "die_count": die_count
+            "die_count": die_count,
         }
 
     def _format_capacity(self, capacity_gb: float) -> str:
@@ -194,6 +204,10 @@ class DDR4Parser:
         else:
             mb = int(capacity_gb * 1024)
             return f"{mb} MB"
+
+    def parse_address_mapping(self) -> int:
+        address_mapping = self.data[SPD_BYTES.ADDRESS_MAPPING]
+        return address_mapping
 
     def parse_voltage(self) -> Dict[str, Any]:
         """解析电压信息"""
@@ -390,12 +404,16 @@ class DDR4Parser:
 
         # Bank groups
         bg_code = (density_byte >> 6) & 0x03
-        bank_groups = 4 if bg_code == 0 else 2
+        bank_groups = 4 if bg_code == 2 else 2
+
+        bank_addr_enc = (density_byte >> 4) & 0x03
+        banks_per_group = 8 if bank_addr_enc == 1 else 4  # Always 4 for DDR4
 
         # Organization string (e.g., "2048 Mb x8 (64M x 8 x 32 banks)")
         density_mb = int(density_gb * 1024)
-        banks_total = bank_groups * BANKS_PER_GROUP
-        organization = f"{density_mb} Mb x{device_width} ({density_mb//8}M x {device_width} x {banks_total} banks)"
+
+        banks_total = bank_groups * banks_per_group
+        organization = f"{density_mb//8} Mb x{device_width} ({density_mb//8//banks_total}Mb x {device_width} x {banks_total} banks)"
 
         return DieInfo(
             density_gb=density_gb,
@@ -411,9 +429,11 @@ class DDR4Parser:
 
         # Bank groups from byte 4, bits 7:6
         bg_code = (density_byte >> 6) & 0x03
-        bank_groups = 4 if bg_code == 0 else 2
+        bank_groups = 4 if bg_code == 2 else 2
 
-        banks_per_group = BANKS_PER_GROUP  # Always 4 for DDR4
+        # banks_per_group = BANKS_PER_GROUP  # Always 4 for DDR4
+        bank_addr_enc = (density_byte >> 4) & 0x03
+        banks_per_group = 8 if bank_addr_enc == 1 else 4  # Always 4 for DDR4
         total_banks = bank_groups * banks_per_group
 
         return BankConfig(
@@ -804,7 +824,7 @@ class DDR4Parser:
         """
         if not self.is_valid():
             return {"error": "Invalid DDR4 data"}
-
+        # self.read_hex()
         capacity = self.parse_capacity()
         timing = self.parse_timings()
         manufacturer = self.parse_manufacturer()
@@ -815,7 +835,9 @@ class DDR4Parser:
         ecc_info = self.parse_ecc_info()
         thermal = self.parse_thermal_sensor()
         dram_manufacturer = self.parse_dram_manufacturer()
-
+        voltage = self.parse_voltage()
+        address_mapping = self.parse_address_mapping()
+        # spd_crc = self.verify_spd_crc()
         result = {
             "memory_type": self.parse_memory_type(),
             "module_type": self.parse_module_type(),
@@ -846,28 +868,90 @@ class DDR4Parser:
             "supported_cl": self.parse_cas_latencies(),
             "xmp": xmp,
             "capacity_details": capacity,
-            "die_info": {
-                "density_gb": die_info.density_gb,
-                "die_count": die_info.die_count,
-                "package_type": die_info.package_type,
-                "signal_loading": die_info.signal_loading,
-                "organization": die_info.organization,
-            },
-            "bank_config": {
-                "bank_groups": bank_config.bank_groups,
-                "banks_per_group": bank_config.banks_per_group,
-                "total_banks": bank_config.total_banks,
-            },
-            "addressing": {
-                "row_bits": addressing.row_bits,
-                "col_bits": addressing.col_bits,
-                "page_size_bytes": addressing.page_size_bytes,
-                "page_size_str": f"{addressing.page_size_bytes // 1024} KB" if addressing.page_size_bytes >= 1024 else f"{addressing.page_size_bytes} bytes",
-            },
-            "ecc_info": ecc_info,
-            "thermal_sensor": thermal,
+            # "die_info": {
+            #     "density_gb": die_info.density_gb,
+            #     "die_count": die_info.die_count,
+            #     "package_type": die_info.package_type,
+            #     "signal_loading": die_info.signal_loading,
+            #     "organization": die_info.organization,
+            # },
+            # "bank_config": {
+            #     "bank_groups": bank_config.bank_groups,
+            #     "banks_per_group": bank_config.banks_per_group,
+            #     "total_banks": bank_config.total_banks,
+            # },
+            # "addressing": {
+            #     "row_bits": addressing.row_bits,
+            #     "col_bits": addressing.col_bits,
+            #     "page_size_bytes": addressing.page_size_bytes,
+            #     "page_size_str": f"{addressing.page_size_bytes // 1024} KB" if addressing.page_size_bytes >= 1024 else f"{addressing.page_size_bytes} bytes",
+            # },
+            # "ecc_info": ecc_info,
+
             "dram_manufacturer": dram_manufacturer,
             "display_mode": mode,
+            # "crc": spd_crc.get("is_valid"),
+            #内存组织
+            "memory_organization":{
+                "ecc_info": ecc_info,
+                "capacity": capacity,
+                #模组类型
+                "module_type": self.parse_module_type(),
+                #扩展类型
+                "extended_type": self.parse_extend_type(),
+                #Rank信息
+                "rank_count": capacity["ranks"],
+                "rank_mix": capacity["ranks_mix"],
+                #位宽配置
+                "device_width": capacity["device_width"],
+                "bus_width": capacity["bus_width"],
+                "ecc_support": ecc_info["has_ecc"],
+                "ecc_width": ecc_info["extension_width"],
+                #每 Rank 颗粒数
+                "devices_per_rank": ecc_info["primary_width"]/capacity["device_width"],
+                #颗粒总数
+                "total_devices": ecc_info["primary_width"]//capacity["device_width"]*capacity["ranks"]// die_info.die_count,
+                # 物理特性
+                "thermal_sensor": thermal,
+                #地址映射
+                "address_mapping": address_mapping,
+            },
+            #颗粒信息
+            "particle_info":{
+                "dram_manufacturer":dram_manufacturer,
+                "dram_stepping":"N/A",
+                "dram_type":"DDR4",
+                "die_count":die_info.die_count,
+                "package_type":die_info.package_type,
+                "stack_type":die_info.signal_loading,
+                "die_density":die_info.density_gb,
+                "organization": die_info.organization,
+                # "row_bits":addressing.row_bits,
+                # "col_bits":addressing.col_bits,
+                # "page_size":f"{addressing.page_size_bytes // 1024} KB" if addressing.page_size_bytes >= 1024 else f"{addressing.page_size_bytes} bytes",
+                # "bank_groups":bank_config.bank_groups,
+                # "banks_per_group":bank_config.banks_per_group,
+                # "total_banks":bank_config.total_banks,
+                "voltage":voltage["nominal"],
+                "die_info": {
+                    "density_gb": die_info.density_gb,
+                    "die_count": die_info.die_count,
+                    "package_type": die_info.package_type,
+                    "signal_loading": die_info.signal_loading,
+                    "organization": die_info.organization,
+                },
+                "bank_config": {
+                    "bank_groups": bank_config.bank_groups,
+                    "banks_per_group": bank_config.banks_per_group,
+                    "total_banks": bank_config.total_banks,
+                },
+                "addressing": {
+                    "row_bits": addressing.row_bits,
+                    "col_bits": addressing.col_bits,
+                    "page_size_bytes": addressing.page_size_bytes,
+                    "page_size_str": f"{addressing.page_size_bytes // 1024} KB" if addressing.page_size_bytes >= 1024 else f"{addressing.page_size_bytes} bytes",
+                },
+            }
         }
 
         # Add inferred information in "read" mode
@@ -881,7 +965,7 @@ class DDR4Parser:
                 "die_description": get_die_description(inferred, die_info.density_gb),
                 "inferred": inferred is not None,
             }
-
+        # print(f"内存信息{json.dumps(result, indent=4)}")
         return result
 
     def parse(self) -> str:
@@ -913,3 +997,77 @@ class DDR4Parser:
             lines.append("XMP支持: 否")
 
         return "\n".join(lines)
+
+    def read_hex(self, set_log: Optional[Callable[[str], None]] = None):
+        # 输出所有 SPD 字节
+        print("===== SPD 字节解析 =====")
+
+        # Byte 0: SPD 使用的字节数
+        byte0 = self.data[SPD_BYTES.BYTES_USED]
+        # Byte 1: SPD 修订版本
+        byte1 = self.data[SPD_BYTES.REVISION]
+        # Byte 2: DRAM 设备类型
+        byte2 = self.data[SPD_BYTES.DRAM_TYPE]
+        # Byte 3: 模块类型
+        byte3 = self.data[SPD_BYTES.MODULE_TYPE]
+        # Byte 4: 密度和 Bank 组
+        byte4 = self.data[SPD_BYTES.DENSITY_BANKS]
+        # Byte 5: 行列地址位数
+        byte5 = self.data[SPD_BYTES.ADDRESSING]
+        # Byte 6: 封装类型
+        byte6 = self.data[SPD_BYTES.PACKAGE_TYPE]
+        # Byte 7: 可选功能
+        byte7 = self.data[SPD_BYTES.OPTIONAL_FEATURES]
+        # Byte 8: 热刷新选项
+        byte8 = self.data[SPD_BYTES.THERMAL_REFRESH]
+        # Byte 9: 其他可选功能
+        byte9 = self.data[SPD_BYTES.OTHER_OPTIONAL]
+        # Byte 10: 次要封装类型
+        byte10 = self.data[SPD_BYTES.SECONDARY_PACKAGE]
+        # Byte 11: 模块标称电压
+        byte11 = self.data[SPD_BYTES.VOLTAGE]
+        # Byte 12: 模块组织
+        byte12 = self.data[SPD_BYTES.MODULE_ORG]
+        # Byte 13: 模块内存总线宽度
+        byte13 = self.data[SPD_BYTES.BUS_WIDTH]
+        # Byte 14: 温度传感器
+        byte14 = self.data[SPD_BYTES.THERMAL_SENSOR]
+        # Byte 15: 扩展模块类型
+        byte15 = self.data[SPD_BYTES.EXTENDED_MODULE_TYPE]
+
+        print(f"[DEBUG] Read Byte {SPD_BYTES.BYTES_USED} 【Num: {byte0}】 byte: 0x{byte0:02X} (binary: {byte0:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.REVISION} 【Num: {byte1}】 byte: 0x{byte1:02X} (binary: {byte1:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.DRAM_TYPE} 【Num: {byte2}】 byte: 0x{byte2:02X} (binary: {byte2:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.MODULE_TYPE} 【Num: {byte3}】 byte: 0x{byte3:02X} (binary: {byte3:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.DENSITY_BANKS} 【Num: {byte4}】 byte: 0x{byte4:02X} (binary: {byte4:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.ADDRESSING} 【Num: {byte5}】 byte: 0x{byte5:02X} (binary: {byte5:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.PACKAGE_TYPE} 【Num: {byte6}】 byte: 0x{byte6:02X} (binary: {byte6:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.OPTIONAL_FEATURES} 【Num: {byte7}】 byte: 0x{byte7:02X} (binary: {byte7:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.THERMAL_REFRESH} 【Num: {byte8}】 byte: 0x{byte8:02X} (binary: {byte8:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.OTHER_OPTIONAL} 【Num: {byte9}】 byte: 0x{byte9:02X} (binary: {byte9:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.SECONDARY_PACKAGE} 【Num: {byte10}】 byte: 0x{byte10:02X} (binary: {byte10:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.VOLTAGE} 【Num: {byte11}】 byte: 0x{byte11:02X} (binary: {byte11:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.MODULE_ORG} 【Num: {byte12}】 byte: 0x{byte12:02X} (binary: {byte12:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.BUS_WIDTH} 【Num: {byte13}】 byte: 0x{byte13:02X} (binary: {byte13:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.THERMAL_SENSOR} 【Num: {byte14}】 byte: 0x{byte14:02X} (binary: {byte14:08b})")
+        print(f"[DEBUG] Read Byte {SPD_BYTES.EXTENDED_MODULE_TYPE} 【Num: {byte15}】 byte: 0x{byte15:02X} (binary: {byte15:08b})")
+
+
+        set_log(f"Read Byte {SPD_BYTES.BYTES_USED}  【Num: {str(byte0).zfill(3)}】 byte: 0x{byte0:02X} (binary: {byte0:08b})")
+        set_log(f"Read Byte {SPD_BYTES.REVISION}  【Num: {str(byte1).zfill(3)}】 byte: 0x{byte1:02X} (binary: {byte1:08b})")
+        set_log(f"Read Byte {SPD_BYTES.DRAM_TYPE}  【Num: {str(byte2).zfill(3)}】 byte: 0x{byte2:02X} (binary: {byte2:08b})")
+        set_log(f"Read Byte {SPD_BYTES.MODULE_TYPE}  【Num: {str(byte3).zfill(3)}】 byte: 0x{byte3:02X} (binary: {byte3:08b})")
+        set_log(f"Read Byte {SPD_BYTES.DENSITY_BANKS}  【Num: {str(byte4).zfill(3)}】 byte: 0x{byte4:02X} (binary: {byte4:08b})")
+        set_log(f"Read Byte {SPD_BYTES.ADDRESSING}  【Num: {str(byte5).zfill(3)}】 byte: 0x{byte5:02X} (binary: {byte5:08b})")
+        set_log(f"Read Byte {SPD_BYTES.PACKAGE_TYPE}  【Num: {str(byte6).zfill(3)}】 byte: 0x{byte6:02X} (binary: {byte6:08b})")
+        set_log(f"Read Byte {SPD_BYTES.OPTIONAL_FEATURES}  【Num: {str(byte7).zfill(3)}】 byte: 0x{byte7:02X} (binary: {byte7:08b})")
+        set_log(f"Read Byte {SPD_BYTES.THERMAL_REFRESH}  【Num: {str(byte8).zfill(3)}】 byte: 0x{byte8:02X} (binary: {byte8:08b})")
+        set_log(f"Read Byte {SPD_BYTES.OTHER_OPTIONAL}  【Num: {str(byte9).zfill(3)}】 byte: 0x{byte9:02X} (binary: {byte9:08b})")
+        set_log(f"Read Byte {SPD_BYTES.SECONDARY_PACKAGE} 【Num: {str(byte10).zfill(3)}】 byte: 0x{byte10:02X} (binary: {byte10:08b})")
+        set_log(f"Read Byte {SPD_BYTES.VOLTAGE} 【Num: {str(byte11).zfill(3)}】 byte: 0x{byte11:02X} (binary: {byte11:08b})")
+        set_log(f"Read Byte {SPD_BYTES.MODULE_ORG} 【Num: {str(byte12).zfill(3)}】 byte: 0x{byte12:02X} (binary: {byte12:08b})")
+        set_log(f"Read Byte {SPD_BYTES.BUS_WIDTH} 【Num: {str(byte13).zfill(3)}】 byte: 0x{byte13:02X} (binary: {byte13:08b})")
+        set_log(f"Read Byte {SPD_BYTES.THERMAL_SENSOR} 【Num: {str(byte14).zfill(3)}】 byte: 0x{byte14:02X} (binary: {byte14:08b})")
+        set_log(f"Read Byte {SPD_BYTES.EXTENDED_MODULE_TYPE} 【Num: {str(byte15).zfill(3)}】 byte: 0x{byte15:02X} (binary: {byte15:08b})")
+
+        print("===== 解析完成 =====")

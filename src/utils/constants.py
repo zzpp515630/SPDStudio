@@ -3,8 +3,8 @@ SPDTools 常量定义
 """
 
 # HID 设备配置
-DEFAULT_VID = 0x0483
-DEFAULT_PID = 0x1230
+DEFAULT_VID = 0x1A86
+DEFAULT_PID = 0x5512
 
 # SPD 数据大小
 SPD_SIZE = 512
@@ -13,71 +13,72 @@ SPD_PAGE_SIZE = 256
 # DDR4 SPD 字节偏移定义
 class SPD_BYTES:
     # 基本信息 (0-127)
-    BYTES_USED = 0          # SPD 使用的字节数
-    REVISION = 1            # SPD 修订版本
-    DRAM_TYPE = 2           # DRAM 设备类型 (0x0C = DDR4)
-    MODULE_TYPE = 3         # 模组类型
-    DENSITY_BANKS = 4       # 密度和 Bank 组
-    ADDRESSING = 5          # 行列地址位数
-    PACKAGE_TYPE = 6        # 封装类型
-    OPTIONAL_FEATURES = 7   # 可选功能
-    THERMAL_REFRESH = 8     # 热刷新选项
-    OTHER_OPTIONAL = 9      # 其他可选功能
-    SECONDARY_PACKAGE = 10  # 次要封装类型
-    VOLTAGE = 11            # 模组标称电压
-    MODULE_ORG = 12         # 模组组织
-    BUS_WIDTH = 13          # 模组内存总线宽度
-    THERMAL_SENSOR = 14     # 温度传感器
+    BYTES_USED = 0  # SPD 使用的字节数 (0x000)
+    REVISION = 1  # SPD 修订版本 (0x001)
+    DRAM_TYPE = 2  # DRAM 设备类型 (0x002, 0x0C = DDR4)
+    MODULE_TYPE = 3  # 模块类型 (0x003)
+    DENSITY_BANKS = 4  # 密度和 Bank 组 (0x004)
+    ADDRESSING = 5  # 行列地址位数 (0x005)
+    PACKAGE_TYPE = 6  # 封装类型 (0x006)
+    OPTIONAL_FEATURES = 7  # 可选功能 (0x007)
+    THERMAL_REFRESH = 8  # 热刷新选项 (0x008)
+    OTHER_OPTIONAL = 9  # 其他可选功能 (0x009)
+    SECONDARY_PACKAGE = 10  # 次要封装类型 (0x00A)
+    VOLTAGE = 11  # 模块标称电压 (0x00B)
+    MODULE_ORG = 12  # 模块组织 (0x00C)
+    BUS_WIDTH = 13  # 模块内存总线宽度 (0x00D)
+    THERMAL_SENSOR = 14  # 温度传感器 (0x00E)
+    EXTENDED_MODULE_TYPE = 15  # 扩展模块类型 (0x00F)  ← 新增，之前遗漏
 
     # 时序参数
-    TIMEBASES = 17          # 时间基准
-    TCK_MIN = 18            # 最小时钟周期 (MTB)
-    TCK_MAX = 19            # 最大时钟周期 (MTB)
-    CAS_LATENCIES_1 = 20    # CAS 延迟支持 (第一字节)
-    CAS_LATENCIES_2 = 21    # CAS 延迟支持 (第二字节)
-    CAS_LATENCIES_3 = 22    # CAS 延迟支持 (第三字节)
-    CAS_LATENCIES_4 = 23    # CAS 延迟支持 (第四字节)
-    TAA_MIN = 24            # 最小 CAS 延迟时间 (tAA)
-    TRCD_MIN = 25           # 最小 RAS 到 CAS 延迟 (tRCD)
-    TRP_MIN = 26            # 最小行预充电时间 (tRP)
-    TRAS_TRC_HIGH = 27      # tRAS 和 tRC 高位
-    TRAS_MIN_LOW = 28       # 最小 Active 到 Precharge (tRAS) 低位
-    TRC_MIN_LOW = 29        # 最小 Active 到 Active/Refresh (tRC) 低位
-    TRFC1_LOW = 30          # 最小刷新恢复时间 (tRFC1) 低位
-    TRFC1_HIGH = 31         # tRFC1 高位
-    TRFC2_LOW = 32          # tRFC2 低位
-    TRFC2_HIGH = 33         # tRFC2 高位
-    TRFC4_LOW = 34          # tRFC4 低位
-    TRFC4_HIGH = 35         # tRFC4 高位
-    TFAW_HIGH = 36          # tFAW 高位
-    TFAW_LOW = 37           # 最小 Four Activate Window (tFAW) 低位
-    TRRD_S_MIN = 38         # 最小 tRRD_S
-    TRRD_L_MIN = 39         # 最小 tRRD_L
-    TCCD_L_MIN = 40         # 最小 tCCD_L
-    TWR_MIN_HIGH = 41       # tWR 高位 (bits 11:8)
-    TWR_MIN_LOW = 42        # tWR 低位 (bits 7:0)
-    # tWTR_S / tWTR_L 为 12-bit：Byte 43 提供高位 nibbles，Byte 44/45 为低位
-    TWTR_MIN_HIGH = 43      # tWTR_S/tWTR_L 高位 nibble 组合
-    TWTR_S_MIN = 44         # 最小 tWTR_S (低 8 位)
-    TWTR_L_MIN = 45         # 最小 tWTR_L (低 8 位)
+    TIMEBASES = 17  # 时间基准 (0x011)
+    TCK_MIN = 18  # 最小时钟周期 (tCKAVGmin) (0x012)
+    TCK_MAX = 19  # 最大时钟周期 (tCKAVGmax) (0x013)
+    CAS_LATENCIES_1 = 20  # CAS 延迟支持 第一字节 (0x014)
+    CAS_LATENCIES_2 = 21  # CAS 延迟支持 第二字节 (0x015)
+    CAS_LATENCIES_3 = 22  # CAS 延迟支持 第三字节 (0x016)
+    CAS_LATENCIES_4 = 23  # CAS 延迟支持 第四字节 (0x017)
+    TAA_MIN = 24  # 最小 CAS 延迟时间 (tAAmin) (0x018)
+    TRCD_MIN = 25  # 最小 RAS 到 CAS 延迟 (tRCDmin) (0x019)
+    TRP_MIN = 26  # 最小行预充电时间 (tRPmin) (0x01A)
+    TRAS_TRC_HIGH = 27  # tRASmin 和 tRCmin 高半字节 (0x01B)
+    TRAS_MIN_LOW = 28  # 最小 Active 到 Precharge (tRASmin) 低位 (0x01C)
+    TRC_MIN_LOW = 29  # 最小 Active 到 Active/Refresh (tRCmin) 低位 (0x01D)
+    TRFC1_LOW = 30  # 最小刷新恢复时间 (tRFC1min) 低位 (0x01E)
+    TRFC1_HIGH = 31  # tRFC1min 高位 (0x01F)
+    TRFC2_LOW = 32  # tRFC2min 低位 (0x020)
+    TRFC2_HIGH = 33  # tRFC2min 高位 (0x021)
+    TRFC4_LOW = 34  # tRFC4min 低位 (0x022)
+    TRFC4_HIGH = 35  # tRFC4min 高位 (0x023)
+    TFAW_HIGH = 36  # tFAWmin 最高有效半字节 (0x024)
+    TFAW_LOW = 37  # tFAWmin 最低有效字节 (0x025)
+    TRRD_S_MIN = 38  # 最小 tRRD_Smin, 不同 bank 组 (0x026)
+    TRRD_L_MIN = 39  # 最小 tRRD_Lmin, 相同 bank 组 (0x027)
+    TCCD_L_MIN = 40  # 最小 tCCD_Lmin, 相同 bank 组 (0x028)
+    TWR_MIN_HIGH = 41  # tWRmin 高位 (0x029)
+    TWR_MIN_LOW = 42  # 最小写恢复时间 (tWRmin) 低位 (0x02A)
+    TWTR_MIN_HIGH = 43  # tWTRmin 高位 (0x02B)
+    TWTR_S_MIN = 44  # 最小写读到时间 (tWTR_Smin), 不同 bank 组 (0x02C)
+    TWTR_L_MIN = 45  # 最小写读到时间 (tWTR_Lmin), 相同 bank 组 (0x02D)
 
-    # CRC 校验位置
-    CRC_SECTION0_START = 0     # 第一段 CRC 计算起始
-    CRC_SECTION0_END = 125     # 第一段 CRC 计算结束 (Byte 0-125)
-    CRC_SECTION0_LSB = 126     # 第一段 CRC 低字节
-    CRC_SECTION0_MSB = 127     # 第一段 CRC 高字节
-    CRC_SECTION1_START = 128   # 第二段 CRC 计算起始
-    CRC_SECTION1_END = 253     # 第二段 CRC 计算结束 (Byte 128-253)
-    CRC_SECTION1_LSB = 254     # 第二段 CRC 低字节
-    CRC_SECTION1_MSB = 255     # 第二段 CRC 高字节
+    # 细粒度时序调整 (FTB) - 注意：这些都在 117-125 字节范围
+    TCCD_L_MIN_FTB = 117  # tCCD_Lmin 微调偏移 (0x075)
+    TRRD_L_MIN_FTB = 118  # tRRD_Lmin 微调偏移 (0x076)
+    TRRD_S_MIN_FTB = 119  # tRRD_Smin 微调偏移 (0x077)
+    TRC_MIN_FTB = 120  # tRCmin 微调偏移 (0x078)
+    TRP_MIN_FTB = 121  # tRPmin 微调偏移 (0x079)
+    TRCD_MIN_FTB = 122  # tRCDmin 微调偏移 (0x07A)
+    TAA_MIN_FTB = 123  # tAAmin 微调偏移 (0x07B)
+    TCK_MAX_FTB = 124  # tCKAVGmax 微调偏移 (0x07C)
+    TCK_MIN_FTB = 125  # tCKAVGmin 微调偏移 (0x07D)
 
-    # 细粒度时序调整 (FTB)
-    TCK_MIN_FTB = 125       # tCK Fine Offset
-    TAA_MIN_FTB = 123       # tAA Fine Offset
-    TRCD_MIN_FTB = 122      # tRCD Fine Offset
-    TRP_MIN_FTB = 121       # tRP Fine Offset
-    TRC_MIN_FTB = 120       # tRC Fine Offset
+    # CRC 校验
+    BOCK0_CRC_LSB = 126  # CRC 最低有效字节 (0x07E)
+    BOCK0_CRC_MSB = 127  # CRC 最高有效字节 (0x07F)
+    ADDRESS_MAPPING  = 131  # CRC 最高有效字节 (0x07F)
 
+    BOCK1_CRC_LSB = 254  # CRC 最低有效字节 (0x07E)
+    BOCK1_CRC_MSB = 255  # CRC 最高有效字节 (0x07F)
     # 制造商信息 (320-383)
     MANUFACTURER_ID_FIRST = 320   # 制造商 ID (第一字节)
     MANUFACTURER_ID_SECOND = 321  # 制造商 ID (第二字节)
@@ -257,7 +258,7 @@ SIGNAL_LOADING = {
 }
 
 # Banks per bank group (DDR4 always has 4 banks per group)
-BANKS_PER_GROUP = 4
+# BANKS_PER_GROUP = 4
 
 # UI 颜色主题
 class Colors:
@@ -273,3 +274,97 @@ class Colors:
     TEXT_SECONDARY = "#aaaaaa"
     MODIFIED = "#f1c40f"
     HIGHLIGHT = "#3498db"
+
+# 常用制造商列表（用于下拉选择）
+DIE_DENSITY_SELECT = [
+    '256Mb',
+    '512Mb',
+    '1Gb',
+    '2Gb',
+    '4Gb',
+    '8Gb',
+    '12Gb',
+    '16Gb',
+    '24Gb',
+    '32Gb',
+]
+
+BANK_GROUPS_SELECT = [
+    "0",
+    "2",
+    "4",
+]
+BANK_PER_GROUPS_SELECT = [
+    "4",
+    "8",
+]
+
+ROW_BITS_SELECT = [
+    "12",
+    "13",
+    "14",
+    "15",
+    "16",
+    "17",
+    "18"
+]
+
+COL_BITS_SELECT = [
+    "9",
+    "10",
+    "11",
+    "12"
+]
+
+DIE_COUNT_SELECT = [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+]
+
+PACKAGE_TYPE_SELECT = {
+    "Monolithic": 0,
+    "Non-Monolithic": 1,
+}
+
+RANK_COUNT_SELECT = [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+]
+
+RANK_MIX_SELECT = [
+    "Symmetrical",
+    "Asymmetrical",
+]
+
+DEVICE_WIDTH_SELECT = [
+    "4",
+    "8",
+    "16",
+    "32",
+]
+
+MEMORY_ORG_BUS_WIDTH_SELECT=[
+    "8","16","32","64"
+]
+
+TOTAL_BUS_WIDTH_SELECT=[
+    "64 bits",
+    "72 bits"
+]
+
+ADDRESS_MAPPING_SELECT=[
+    "standard",
+    "mirror"
+]
